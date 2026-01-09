@@ -16,8 +16,9 @@ scene.add(new THREE.AmbientLight(0x404040));
 
 const planets = [];
 const raycaster = new THREE.Raycaster();
-let selectedObject = null;
-let lastDist = null;
+let hoveredObject = null;
+let selectionTimer = 0;
+const SELECTION_THRESHOLD = 180; // ~3 segundos a 60fps
 
 const createPlanet = (size, color, dist, name) => {
     const mesh = new THREE.Mesh(new THREE.SphereGeometry(size, 32, 32), new THREE.MeshStandardMaterial({ color }));
@@ -30,71 +31,66 @@ const createPlanet = (size, color, dist, name) => {
 createPlanet(2, 0xffcc00, 0, "Sol");
 createPlanet(0.8, 0x00aaff, 8, "Terra");
 createPlanet(0.6, 0xff4400, 12, "Marte");
+createPlanet(1.2, 0xff9900, 16, "Saturno");
 
-camera.position.z = 25;
+camera.position.z = 30;
 
 // --- MEDIAPIPE LOGIC ---
 const hands = new Hands({locateFile: (f) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${f}`});
-hands.setOptions({ maxNumHands: 2, modelComplexity: 1, minDetectionConfidence: 0.7 });
+hands.setOptions({ maxNumHands: 1, modelComplexity: 1, minDetectionConfidence: 0.7 });
 
 hands.onResults((res) => {
     canvasCtx.save();
     canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
     
     if (res.multiHandLandmarks && res.multiHandLandmarks.length > 0) {
-        // Desenhar esqueleto das mãos
-        res.multiHandLandmarks.forEach(marks => {
-            drawConnectors(canvasCtx, marks, HAND_CONNECTIONS, {color: '#00FFCC', lineWidth: 3});
-            drawLandmarks(canvasCtx, marks, {color: '#FF0000', radius: 2});
-            
-            // Desenhar "Cursor" na ponta do indicador
-            const indexTip = marks[8];
-            canvasCtx.beginPath();
-            canvasCtx.arc(indexTip.x * canvasElement.width, indexTip.y * canvasElement.height, 10, 0, 2 * Math.PI);
-            canvasCtx.strokeStyle = '#00FFCC';
-            canvasCtx.stroke();
-        });
+        const marks = res.multiHandLandmarks[0];
+        drawConnectors(canvasCtx, marks, HAND_CONNECTIONS, {color: '#00FFCC', lineWidth: 2});
+        
+        const indexTip = marks[8];
+        const screenX = indexTip.x * canvasElement.width;
+        const screenY = indexTip.y * canvasElement.height;
 
-        // LÓGICA DE 2 MÃOS (ZOOM)
-        if (res.multiHandLandmarks.length === 2) {
-            const h1 = res.multiHandLandmarks[0][9];
-            const h2 = res.multiHandLandmarks[1][9];
-            const dist = Math.hypot(h1.x - h2.x, h1.y - h2.y);
-            if (lastDist) {
-                camera.position.z -= (dist - lastDist) * 40;
-                camera.position.z = THREE.MathUtils.clamp(camera.position.z, 5, 60);
-            }
-            lastDist = dist;
-        } 
-        // LÓGICA DE 1 MÃO (ROTAÇÃO OU SELEÇÃO)
-        else {
-            lastDist = null;
-            const hand = res.multiHandLandmarks[0];
-            const indexTip = hand[8];
-            const thumbTip = hand[4];
-            const pinchDist = Math.hypot(indexTip.x - thumbTip.x, indexTip.y - thumbTip.y);
+        // Desenhar Mira (Crosshair)
+        canvasCtx.strokeStyle = hoveredObject ? '#FF0000' : '#00FFCC';
+        canvasCtx.lineWidth = 3;
+        canvasCtx.beginPath();
+        canvasCtx.arc(screenX, screenY, 20, 0, 2 * Math.PI);
+        // Barra de progresso circular (3 segundos)
+        if (hoveredObject) {
+            canvasCtx.arc(screenX, screenY, 25, 0, (selectionTimer / SELECTION_THRESHOLD) * 2 * Math.PI);
+        }
+        canvasCtx.stroke();
 
-            // Coordenadas para Raycasting (Mouse Virtual)
-            const mouse = new THREE.Vector2((indexTip.x * 2 - 1), -(indexTip.y * 2 - 1));
-            raycaster.setFromCamera(mouse, camera);
+        // Raycasting para detecção
+        const mouse = new THREE.Vector2((indexTip.x * 2 - 1), -(indexTip.y * 2 - 1));
+        raycaster.setFromCamera(mouse, camera);
+        const intersects = raycaster.intersectObjects(planets);
 
-            if (pinchDist < 0.05) { // Gesto de Pinça (Selecionar)
-                if (!selectedObject) {
-                    const intersects = raycaster.intersectObjects(planets);
-                    if (intersects.length > 0) selectedObject = intersects[0].object;
-                }
-                if (selectedObject) {
-                    const vector = new THREE.Vector3(mouse.x, mouse.y, 0.5).unproject(camera);
-                    const dir = vector.sub(camera.position).normalize();
-                    const distance = -camera.position.z / dir.z;
-                    selectedObject.position.copy(camera.position.clone().add(dir.multiplyScalar(distance)));
+        if (intersects.length > 0) {
+            const obj = intersects[0].object;
+            if (hoveredObject === obj) {
+                selectionTimer++;
+                if (selectionTimer >= SELECTION_THRESHOLD) {
+                    // Efeito de ZOOM ao selecionar
+                    const targetZ = obj.position.x + 5;
+                    camera.position.z += (targetZ - camera.position.z) * 0.1;
+                    camera.lookAt(obj.position);
                 }
             } else {
-                selectedObject = null;
-                // Se não está a selecionar, a mão rotaciona a cena
-                scene.rotation.y = (indexTip.x - 0.5) * 4;
-                scene.rotation.x = (indexTip.y - 0.5) * 4;
+                hoveredObject = obj;
+                selectionTimer = 0;
             }
+        } else {
+            hoveredObject = null;
+            selectionTimer = 0;
+            // Volta suavemente para a visão geral se nada for focado
+            camera.position.z += (30 - camera.position.z) * 0.02;
+        }
+        
+        // Rotação da cena se não houver seleção ativa
+        if (selectionTimer < SELECTION_THRESHOLD) {
+            scene.rotation.y += ((indexTip.x - 0.5) * 2 - scene.rotation.y) * 0.1;
         }
     }
     canvasCtx.restore();
