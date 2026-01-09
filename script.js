@@ -4,59 +4,94 @@ const canvasCtx = canvasElement.getContext('2d');
 const startBtn = document.getElementById('start-btn');
 const ui = document.getElementById('ui');
 
-// 1. SETUP THREE.JS (Sistema Solar)
+// --- CONFIGURAÇÃO THREE.JS ---
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setSize(window.innerWidth, window.innerHeight);
 document.body.appendChild(renderer.domElement);
 
-const sunLight = new THREE.PointLight(0xffffff, 2, 100);
-scene.add(sunLight);
+scene.add(new THREE.PointLight(0xffffff, 3, 100));
 scene.add(new THREE.AmbientLight(0x404040));
 
-const createPlanet = (size, color, dist) => {
+const planets = [];
+const raycaster = new THREE.Raycaster();
+let selectedObject = null;
+let lastDist = null;
+
+const createPlanet = (size, color, dist, name) => {
     const mesh = new THREE.Mesh(new THREE.SphereGeometry(size, 32, 32), new THREE.MeshStandardMaterial({ color }));
-    const pivot = new THREE.Object3D();
     mesh.position.x = dist;
-    pivot.add(mesh);
-    scene.add(pivot);
-    return { pivot };
+    mesh.name = name;
+    scene.add(mesh);
+    planets.push(mesh);
 };
 
-const sun = new THREE.Mesh(new THREE.SphereGeometry(2, 32, 32), new THREE.MeshBasicMaterial({ color: 0xffcc00 }));
-scene.add(sun);
-const planets = [createPlanet(0.4, 0xaaaaaa, 4), createPlanet(0.7, 0xff9900, 6), createPlanet(0.8, 0x00aaff, 9)];
+createPlanet(2, 0xffcc00, 0, "Sol");
+createPlanet(0.8, 0x00aaff, 8, "Terra");
+createPlanet(0.6, 0xff4400, 12, "Marte");
 
-camera.position.z = 20;
-camera.position.y = 5;
-camera.lookAt(0,0,0);
+camera.position.z = 25;
 
-// 2. SETUP MEDIAPIPE (Deteção e Desenho)
+// --- MEDIAPIPE LOGIC ---
 const hands = new Hands({locateFile: (f) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${f}`});
-hands.setOptions({ maxNumHands: 1, modelComplexity: 1, minDetectionConfidence: 0.7 });
+hands.setOptions({ maxNumHands: 2, modelComplexity: 1, minDetectionConfidence: 0.7 });
 
 hands.onResults((res) => {
     canvasCtx.save();
     canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
     
     if (res.multiHandLandmarks && res.multiHandLandmarks.length > 0) {
-        for (const landmarks of res.multiHandLandmarks) {
-            // Desenha o esqueleto (o que você pediu)
-            drawConnectors(canvasCtx, landmarks, HAND_CONNECTIONS, {color: '#00FFCC', lineWidth: 4});
-            drawLandmarks(canvasCtx, landmarks, {color: '#FF0000', lineWidth: 2, radius: 3});
+        // 1. Desenhar mãos
+        res.multiHandLandmarks.forEach(marks => {
+            drawConnectors(canvasCtx, marks, HAND_CONNECTIONS, {color: '#00FFCC', lineWidth: 3});
+            drawLandmarks(canvasCtx, marks, {color: '#FF0000', radius: 2});
+        });
+
+        // 2. Lógica de ZOOM (Duas Mãos)
+        if (res.multiHandLandmarks.length === 2) {
+            const h1 = res.multiHandLandmarks[0][9];
+            const h2 = res.multiHandLandmarks[1][9];
+            const dist = Math.hypot(h1.x - h2.x, h1.y - h2.y);
+            if (lastDist) {
+                camera.position.z -= (dist - lastDist) * 50;
+                camera.position.z = THREE.MathUtils.clamp(camera.position.z, 5, 60);
+            }
+            lastDist = dist;
+        } else {
+            lastDist = null;
             
-            // Move o sistema solar
-            scene.rotation.y = (landmarks[9].x - 0.5) * 4;
-            scene.rotation.x = (landmarks[9].y - 0.5) * 4;
+            // 3. SELECIONAR E MOVER (Uma Mão - Gesto de Pinça)
+            const hand = res.multiHandLandmarks[0];
+            const thumb = hand[4];
+            const index = hand[8];
+            const pinchDist = Math.hypot(thumb.x - index.x, thumb.y - index.y);
+
+            // Converter posição da mão para coordenadas 3D (-1 a 1)
+            const mouse = new THREE.Vector2((index.x * 2 - 1), -(index.y * 2 - 1));
+            raycaster.setFromCamera(mouse, camera);
+
+            if (pinchDist < 0.05) { // Pinça fechada
+                if (!selectedObject) {
+                    const intersects = raycaster.intersectObjects(planets);
+                    if (intersects.length > 0) selectedObject = intersects[0].object;
+                }
+                if (selectedObject) {
+                    const vector = new THREE.Vector3(mouse.x, mouse.y, 0.5).unproject(camera);
+                    const dir = vector.sub(camera.position).normalize();
+                    const distance = -camera.position.z / dir.z;
+                    const pos = camera.position.clone().add(dir.multiplyScalar(distance));
+                    selectedObject.position.copy(pos);
+                }
+            } else {
+                selectedObject = null;
+            }
         }
     }
     canvasCtx.restore();
 });
 
-const cam = new Camera(videoElement, {
-    onFrame: async () => { await hands.send({image: videoElement}); }
-});
+const cam = new Camera(videoElement, { onFrame: async () => { await hands.send({image: videoElement}); } });
 
 startBtn.onclick = () => {
     ui.style.display = 'none';
@@ -67,7 +102,6 @@ startBtn.onclick = () => {
 
 function animate() {
     requestAnimationFrame(animate);
-    planets.forEach((p, i) => p.pivot.rotation.y += 0.01 * (1 / (i + 1)));
     renderer.render(scene, camera);
 }
 animate();
