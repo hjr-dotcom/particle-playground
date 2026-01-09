@@ -3,24 +3,31 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Particle Playground</title>
+    <title>Sistema Solar Interativo</title>
     <style>
         body { margin: 0; overflow: hidden; background: #000; font-family: sans-serif; }
         #ui { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); text-align: center; color: white; z-index: 10; }
         button { padding: 15px 30px; font-size: 18px; cursor: pointer; background: #00ffcc; border: none; border-radius: 30px; font-weight: bold; }
-        #video-input { position: absolute; bottom: 20px; right: 20px; width: 150px; transform: scaleX(-1); border-radius: 10px; opacity: 0.5; }
+        #video-container { position: absolute; bottom: 20px; right: 20px; width: 250px; border: 2px solid #333; border-radius: 10px; overflow: hidden; }
+        #video-input { width: 100%; transform: scaleX(-1); display: block; }
+        #output-canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; transform: scaleX(-1); }
     </style>
 </head>
 <body>
     <div id="ui">
-        <h1>Particle Playground</h1>
+        <h1>Sistema Solar Controlado por Mão</h1>
         <button id="start-btn">ATIVAR CÂMERA</button>
     </div>
-    <video id="video-input" autoplay playsinline></video>
+
+    <div id="video-container">
+        <video id="video-input" autoplay playsinline></video>
+        <canvas id="output-canvas"></canvas>
+    </div>
 
     <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"></script>
     <script src="script.js"></script>
 </body>
 </html>
