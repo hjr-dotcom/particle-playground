@@ -4,24 +4,29 @@ const canvasCtx = canvasElement.getContext('2d');
 const startBtn = document.getElementById('start-btn');
 const ui = document.getElementById('ui');
 
-// --- SETUP THREE.JS ---
+// --- 1. CONFIGURAÇÃO SCENE 3D ---
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
-const renderer = new THREE.WebGLRenderer({ antialias: true });
+const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
 renderer.setSize(window.innerWidth, window.innerHeight);
 document.body.appendChild(renderer.domElement);
 
-scene.add(new THREE.PointLight(0xffffff, 3, 100));
-scene.add(new THREE.AmbientLight(0x404040));
+const light = new THREE.PointLight(0xffffff, 5, 100);
+light.position.set(0, 0, 10);
+scene.add(light);
+scene.add(new THREE.AmbientLight(0x404040, 2));
 
 const planets = [];
 const raycaster = new THREE.Raycaster();
 let hoveredObject = null;
 let selectionTimer = 0;
-const SELECTION_THRESHOLD = 90; // Reduzido para ~1.5 segundos para ser mais ágil
+const SELECTION_THRESHOLD = 90; 
 
 const createPlanet = (size, color, dist, name) => {
-    const mesh = new THREE.Mesh(new THREE.SphereGeometry(size, 32, 32), new THREE.MeshStandardMaterial({ color }));
+    const mesh = new THREE.Mesh(
+        new THREE.SphereGeometry(size, 32, 32), 
+        new THREE.MeshStandardMaterial({ color, emissive: color, emissiveIntensity: 0.2 })
+    );
     mesh.position.set(dist, 0, 0);
     mesh.name = name;
     scene.add(mesh);
@@ -29,47 +34,53 @@ const createPlanet = (size, color, dist, name) => {
     return mesh;
 };
 
-// Planetas
-createPlanet(2.5, 0xffcc00, 0, "Sol");
-createPlanet(0.8, 0x00aaff, 8, "Terra");
-createPlanet(1.2, 0xff9900, 14, "Marte");
+// Criar Sol e Planetas
+createPlanet(3, 0xffcc00, 0, "Sol");
+createPlanet(1, 0x00aaff, 10, "Terra");
+createPlanet(1.5, 0xff4400, 18, "Marte");
 
-camera.position.z = 35;
+camera.position.z = 40;
 
-// --- MEDIAPIPE LOGIC ---
+// --- 2. CONFIGURAÇÃO MEDIAPIPE ---
 const hands = new Hands({locateFile: (f) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${f}`});
-hands.setOptions({ maxNumHands: 1, modelComplexity: 1, minDetectionConfidence: 0.7 });
+hands.setOptions({ 
+    maxNumHands: 2, // Ativado para evitar perda de tracking
+    modelComplexity: 1, 
+    minDetectionConfidence: 0.5, 
+    minTrackingConfidence: 0.5 
+});
 
 hands.onResults((res) => {
     canvasCtx.save();
     canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
     
     if (res.multiHandLandmarks && res.multiHandLandmarks.length > 0) {
+        // Usar a primeira mão detectada para a mira
         const marks = res.multiHandLandmarks[0];
         
-        // 1. Desenhar o esqueleto (Tracker)
+        // Desenhar Tracker Visual
         drawConnectors(canvasCtx, marks, HAND_CONNECTIONS, {color: '#00FFCC', lineWidth: 2});
-        drawLandmarks(canvasCtx, marks, {color: '#FF0000', radius: 1});
 
-        const indexTip = marks[8]; // Ponta do indicador
+        const indexTip = marks[8];
         const screenX = indexTip.x * canvasElement.width;
         const screenY = indexTip.y * canvasElement.height;
 
-        // 2. Lógica de Colisão (Raycasting)
-        // Inverter X para compensar o espelhamento da câmera
+        // --- LÓGICA DE SELEÇÃO (RAYCASTING) ---
+        // Ajuste crucial: Inverter o X do raycaster devido ao espelhamento da câmera
         const mouse = new THREE.Vector2((indexTip.x * 2 - 1), -(indexTip.y * 2 - 1));
         raycaster.setFromCamera(mouse, camera);
+        
         const intersects = raycaster.intersectObjects(planets);
 
         if (intersects.length > 0) {
             const obj = intersects[0].object;
             if (hoveredObject === obj) {
                 selectionTimer++;
-                // Iniciar Zoom Progressivo após seleção
+                // --- LÓGICA DE ZOOM ---
                 if (selectionTimer >= SELECTION_THRESHOLD) {
-                    const targetPos = new THREE.Vector3().setFromMatrixPosition(obj.matrixWorld);
-                    camera.position.lerp(new THREE.Vector3(targetPos.x, targetPos.y, targetPos.z + 7), 0.05);
-                    camera.lookAt(targetPos);
+                    const worldPos = new THREE.Vector3();
+                    obj.getWorldPosition(worldPos);
+                    camera.position.lerp(new THREE.Vector3(worldPos.x, worldPos.y, worldPos.z + 8), 0.05);
                 }
             } else {
                 hoveredObject = obj;
@@ -78,26 +89,27 @@ hands.onResults((res) => {
         } else {
             hoveredObject = null;
             selectionTimer = 0;
-            // Retornar à visão geral suavemente
-            camera.position.lerp(new THREE.Vector3(0, 5, 35), 0.03);
-            const targetCenter = new THREE.Vector3(0,0,0);
-            camera.lookAt(targetCenter);
+            // Resetar Câmera
+            camera.position.lerp(new THREE.Vector3(0, 5, 40), 0.03);
+            camera.lookAt(0, 0, 0);
         }
 
-        // 3. Desenhar a Mira UI
-        canvasCtx.lineWidth = 4;
-        canvasCtx.strokeStyle = hoveredObject ? '#FF0000' : '#00FFCC';
+        // --- DESENHAR MIRA VISUAL ---
+        canvasCtx.lineWidth = 5;
+        canvasCtx.strokeStyle = hoveredObject ? '#FF3333' : '#00FFCC';
         
-        // Círculo fixo da mira
+        // Mira central
         canvasCtx.beginPath();
-        canvasCtx.arc(screenX, screenY, 20, 0, 2 * Math.PI);
+        canvasCtx.arc(screenX, screenY, 15, 0, 2 * Math.PI);
         canvasCtx.stroke();
 
-        // Círculo de progresso (Dwell Timer)
-        if (hoveredObject && selectionTimer < SELECTION_THRESHOLD) {
+        // Anel de carregamento (Dwell)
+        if (hoveredObject) {
             canvasCtx.beginPath();
             canvasCtx.strokeStyle = '#FFFFFF';
-            canvasCtx.arc(screenX, screenY, 25, 0, (selectionTimer / SELECTION_THRESHOLD) * 2 * Math.PI);
+            canvasCtx.lineWidth = 3;
+            const progress = Math.min(selectionTimer / SELECTION_THRESHOLD, 1);
+            canvasCtx.arc(screenX, screenY, 22, 0, progress * 2 * Math.PI);
             canvasCtx.stroke();
         }
     }
@@ -109,17 +121,24 @@ const cam = new Camera(videoElement, {
     width: 640, height: 480
 });
 
+// Inicialização correta dos tamanhos
 startBtn.onclick = () => {
     ui.style.display = 'none';
-    cam.start();
-    canvasElement.width = 640;
-    canvasElement.height = 480;
+    cam.start().then(() => {
+        canvasElement.width = videoElement.videoWidth;
+        canvasElement.height = videoElement.videoHeight;
+    });
 };
 
 function animate() {
     requestAnimationFrame(animate);
-    // Rotação básica para não ficar estático
-    planets.forEach((p, i) => { if(i>0) p.rotation.y += 0.01 });
+    planets.forEach(p => p.rotation.y += 0.005);
     renderer.render(scene, camera);
 }
 animate();
+
+window.addEventListener('resize', () => {
+    camera.aspect = window.innerWidth / window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+});
