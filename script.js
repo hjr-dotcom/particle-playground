@@ -4,7 +4,7 @@ const canvasCtx = canvasElement.getContext('2d');
 const startBtn = document.getElementById('start-btn');
 const ui = document.getElementById('ui');
 
-// --- CONFIGURAÇÃO THREE.JS ---
+// --- SETUP THREE.JS ---
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
 const renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -42,36 +42,43 @@ hands.onResults((res) => {
     canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
     
     if (res.multiHandLandmarks && res.multiHandLandmarks.length > 0) {
-        // 1. Desenhar mãos
+        // Desenhar esqueleto das mãos
         res.multiHandLandmarks.forEach(marks => {
             drawConnectors(canvasCtx, marks, HAND_CONNECTIONS, {color: '#00FFCC', lineWidth: 3});
             drawLandmarks(canvasCtx, marks, {color: '#FF0000', radius: 2});
+            
+            // Desenhar "Cursor" na ponta do indicador
+            const indexTip = marks[8];
+            canvasCtx.beginPath();
+            canvasCtx.arc(indexTip.x * canvasElement.width, indexTip.y * canvasElement.height, 10, 0, 2 * Math.PI);
+            canvasCtx.strokeStyle = '#00FFCC';
+            canvasCtx.stroke();
         });
 
-        // 2. Lógica de ZOOM (Duas Mãos)
+        // LÓGICA DE 2 MÃOS (ZOOM)
         if (res.multiHandLandmarks.length === 2) {
             const h1 = res.multiHandLandmarks[0][9];
             const h2 = res.multiHandLandmarks[1][9];
             const dist = Math.hypot(h1.x - h2.x, h1.y - h2.y);
             if (lastDist) {
-                camera.position.z -= (dist - lastDist) * 50;
+                camera.position.z -= (dist - lastDist) * 40;
                 camera.position.z = THREE.MathUtils.clamp(camera.position.z, 5, 60);
             }
             lastDist = dist;
-        } else {
+        } 
+        // LÓGICA DE 1 MÃO (ROTAÇÃO OU SELEÇÃO)
+        else {
             lastDist = null;
-            
-            // 3. SELECIONAR E MOVER (Uma Mão - Gesto de Pinça)
             const hand = res.multiHandLandmarks[0];
-            const thumb = hand[4];
-            const index = hand[8];
-            const pinchDist = Math.hypot(thumb.x - index.x, thumb.y - index.y);
+            const indexTip = hand[8];
+            const thumbTip = hand[4];
+            const pinchDist = Math.hypot(indexTip.x - thumbTip.x, indexTip.y - thumbTip.y);
 
-            // Converter posição da mão para coordenadas 3D (-1 a 1)
-            const mouse = new THREE.Vector2((index.x * 2 - 1), -(index.y * 2 - 1));
+            // Coordenadas para Raycasting (Mouse Virtual)
+            const mouse = new THREE.Vector2((indexTip.x * 2 - 1), -(indexTip.y * 2 - 1));
             raycaster.setFromCamera(mouse, camera);
 
-            if (pinchDist < 0.05) { // Pinça fechada
+            if (pinchDist < 0.05) { // Gesto de Pinça (Selecionar)
                 if (!selectedObject) {
                     const intersects = raycaster.intersectObjects(planets);
                     if (intersects.length > 0) selectedObject = intersects[0].object;
@@ -80,11 +87,13 @@ hands.onResults((res) => {
                     const vector = new THREE.Vector3(mouse.x, mouse.y, 0.5).unproject(camera);
                     const dir = vector.sub(camera.position).normalize();
                     const distance = -camera.position.z / dir.z;
-                    const pos = camera.position.clone().add(dir.multiplyScalar(distance));
-                    selectedObject.position.copy(pos);
+                    selectedObject.position.copy(camera.position.clone().add(dir.multiplyScalar(distance)));
                 }
             } else {
                 selectedObject = null;
+                // Se não está a selecionar, a mão rotaciona a cena
+                scene.rotation.y = (indexTip.x - 0.5) * 4;
+                scene.rotation.x = (indexTip.y - 0.5) * 4;
             }
         }
     }
